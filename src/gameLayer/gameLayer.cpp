@@ -23,6 +23,8 @@ struct GameData {
 
 	float health = 1.f; // player's life 0 -> 1
 	float spawnEnemyTimerSecconds = 0.f; // time until next enemy spawn
+
+	int killedEnemyCount = 0;
 };
 
 GameData gameData;
@@ -44,6 +46,11 @@ gl2d::Texture backgroundTexture[BACKGROUNDS];
 TiledRenderer tiledRenderer[BACKGROUNDS];
 
 Sound shootSound;
+bool isInGame = false;
+bool isGameOver = false;
+
+glui::RendererUi uiRenderer;
+gl2d::Font font;
 
 constexpr float shipSize = 250.f;
 
@@ -59,12 +66,12 @@ void spawnEnemies() {
 	e.position = gameData.playerPosition;
 
 	glm::vec2 offset(2000, 0);
-	offset = glm::vec2(glm::vec4(offset, 0, 1) * 
-			glm::rotate(
-				glm::mat4(1.f),
-				glm::radians((float)(rand() % 360)),
-				glm::vec3(0, 0, 1)
-			)
+	offset = glm::vec2(glm::vec4(offset, 0, 1) *
+		glm::rotate(
+			glm::mat4(1.f),
+			glm::radians((float)(rand() % 360)),
+			glm::vec3(0, 0, 1)
+		)
 	);
 
 	e.position += offset;
@@ -79,11 +86,23 @@ void spawnEnemies() {
 	gameData.enemies.push_back(e);
 }
 
-void restartGame()
+void startGame()
 {
 	gameData = {};
 	renderer.currentCamera
 		.follow(gameData.playerPosition, 550, 0, 150, renderer.windowW, renderer.windowH);
+}
+
+void restartGame()
+{
+	isGameOver = true;
+	startGame();
+}
+
+void death()
+{
+	isInGame = true;
+	isGameOver = true;
 }
 
 bool initGame()
@@ -104,6 +123,8 @@ bool initGame()
 	shootSound = LoadSound(RESOURCES_PATH "shoot.flac");
 	SetSoundVolume(shootSound, 0.5f);
 
+	font.createFromFile(RESOURCES_PATH "CommodorePixeled.ttf");
+
 	//spaceShipsTexture.loadFromFile(RESOURCES_PATH "spaceShip/ships/green.png", true);
 	backgroundTexture[0].loadFromFile(RESOURCES_PATH "background1.png", true);
 	backgroundTexture[1].loadFromFile(RESOURCES_PATH "background2.png", true);
@@ -120,26 +141,13 @@ bool initGame()
 	tiledRenderer[2].paralaxStrength = 0.6;
 	tiledRenderer[3].paralaxStrength = 0.7;
 
-	restartGame();
+	startGame();
 
 	return true;
 }
 
-
-
-bool gameLogic(float deltaTime)
+void gamePlay(float deltaTime, int w, int h)
 {
-#pragma region init stuff
-	int w = 0; int h = 0;
-	w = platform::getFrameBufferSizeX(); //window w
-	h = platform::getFrameBufferSizeY(); //window h
-
-	glViewport(0, 0, w, h);
-	glClear(GL_COLOR_BUFFER_BIT); //clear screen
-
-	renderer.updateWindowMetrics(w, h);
-#pragma endregion
-
 #pragma region movement
 	glm::vec2 move{ };
 
@@ -246,7 +254,10 @@ bool gameLogic(float deltaTime)
 					shouldContinueBulletCycle = true;
 
 					if (enemy->health <= 0)
+					{
 						gameData.enemies.erase(gameData.enemies.begin() + j);
+						gameData.killedEnemyCount++;
+					}
 
 					break;
 				}
@@ -275,7 +286,7 @@ bool gameLogic(float deltaTime)
 
 	if (gameData.health <= 0)
 	{
-		restartGame();
+		isInGame = false;
 	}
 	else
 	{
@@ -284,7 +295,6 @@ bool gameLogic(float deltaTime)
 
 	}
 #pragma endregion
-
 
 #pragma region handle enemies
 
@@ -317,44 +327,24 @@ bool gameLogic(float deltaTime)
 
 		if (enemy->update(deltaTime, gameData.playerPosition))
 		{
-			Bullet b;
-			b.position = enemy->position;
-			b.fireDirection = enemy->viewDirection;
-			b.isEnemy = 1;
-			b.speed = enemy->bulletSpeed;
+			if (rand() % 3 == 0)
+			{
+				Bullet b;
+				b.position = enemy->position;
+				b.fireDirection = enemy->viewDirection;
+				b.isEnemy = 1;
+				b.speed = enemy->bulletSpeed;
 
-			gameData.bullets.push_back(b);
+				gameData.bullets.push_back(b);
 
-			if (!IsSoundPlaying(shootSound))
-				PlaySound(shootSound);
+				if (!IsSoundPlaying(shootSound))
+					PlaySound(shootSound);
+			}
 		}
 
 	}
 
-#pragma endregion
-
-#pragma region ui
-	renderer.pushCamera();
-	{
-		glui::Frame f({ 0,0, w,h });
-		glui::Box healthBox = glui::Box().xLeftPerc(0.65)
-			.yTopPerc(0.1)
-			.xDimensionPercentage(0.3)
-			.yAspectRatio(1.f / 8.f);
-
-		renderer.renderRectangle(healthBox, healthBarTexture);
-
-		glm::vec4 newRect = healthBox();
-		newRect.z *= gameData.health;
-
-		glm::vec4 textCoords = { 0,0,1,1 };
-		textCoords.z *= gameData.health;
-
-		renderer.renderRectangle(newRect, healthTexture, Colors_White, {}, {}, textCoords);
-	}
-	renderer.popCamera();
-
-#pragma endregion
+#pragma endregion 
 
 #pragma region render enemies
 
@@ -382,14 +372,86 @@ bool gameLogic(float deltaTime)
 
 #pragma endregion
 
+#pragma region ui
+	renderer.pushCamera();
+	{
+		glui::Frame f({ 0,0, w,h });
+		glui::Box healthBox = glui::Box().xLeftPerc(0.65)
+			.yTopPerc(0.1)
+			.xDimensionPercentage(0.3)
+			.yAspectRatio(1.f / 8.f);
+
+		renderer.renderRectangle(healthBox, healthBarTexture);
+
+		glm::vec4 newRect = healthBox();
+		newRect.z *= gameData.health;
+
+		glm::vec4 textCoords = { 0,0,1,1 };
+		textCoords.z *= gameData.health;
+
+		renderer.renderRectangle(newRect, healthTexture, Colors_White, {}, {}, textCoords);
+	}
+	renderer.popCamera();
+
+#pragma endregion
+}
+
+void drawMenu(float deltaTime)
+{
+	uiRenderer.Begin(1);
+
+	if (isGameOver)
+	{
+		uiRenderer.Text("Game Over", Colors_Red);
+		uiRenderer.Text("Killed enemies: " + std::to_string(gameData.killedEnemyCount), Colors_White);
+		uiRenderer.Text("Press 'Play' to restart", Colors_White);
+	}
+
+	if (uiRenderer.Button("Play", Colors_White))
+	{
+		isInGame = true;
+		restartGame();
+	}
+
+	if(uiRenderer.Button("Quit", Colors_White))
+	{
+		closeGame();
+	}
+
+	uiRenderer.End();
+
+	uiRenderer.renderFrame(renderer, font, platform::getRelMousePosition(),
+		platform::isLMousePressed(), platform::isLMouseHeld(), platform::isLMouseReleased(),
+		platform::isButtonReleased(platform::Button::Escape), platform::getTypedInput(), deltaTime);
+}
+
+bool gameLogic(float deltaTime)
+{
+#pragma region init stuff
+	int w = 0; int h = 0;
+	w = platform::getFrameBufferSizeX(); //window w
+	h = platform::getFrameBufferSizeY(); //window h
+
+	glViewport(0, 0, w, h);
+	glClear(GL_COLOR_BUFFER_BIT); //clear screen
+
+	renderer.updateWindowMetrics(w, h);
+#pragma endregion
+
+	if (isInGame)
+		gamePlay(deltaTime, w, h);
+	else
+		drawMenu(deltaTime);
+
 	renderer.flush();
 
 	//ImGui::ShowDemoWindow();
 
-	ImGui::Begin("Debug");
+	/*ImGui::Begin("Debug");
 
 	ImGui::Text("Bulles Count: %d", (int)gameData.bullets.size());
 	ImGui::Text("Enemies Count: %d", (int)gameData.enemies.size());
+	ImGui::Text("Killed Enemies Count: %d", (int)gameData.killedEnemyCount);
 
 	if (ImGui::Button("Spawn Enemy"))
 	{
@@ -403,7 +465,7 @@ bool gameLogic(float deltaTime)
 
 	ImGui::SliderFloat("Player Health", &gameData.health, 0, 1);
 
-	ImGui::End();
+	ImGui::End();*/
 
 	return true;
 #pragma endregion
@@ -413,7 +475,5 @@ bool gameLogic(float deltaTime)
 //This function might not be be called if the program is forced closed
 void closeGame()
 {
-
-
-
+	exit(EXIT_SUCCESS);
 }
